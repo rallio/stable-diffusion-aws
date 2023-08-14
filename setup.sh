@@ -4,7 +4,6 @@ set -e
 
 CUDA_VERSION="12.2.0"
 CUDA_FULL_VERSION="12.2.0_535.54.03"
-
 INSTALL_AUTOMATIC1111="$(curl -s http://169.254.169.254/latest/meta-data/tags/instance/INSTALL_AUTOMATIC1111)"
 INSTALL_INVOKEAI="$(curl -s http://169.254.169.254/latest/meta-data/tags/instance/INSTALL_INVOKEAI)"
 GUI_TO_START="$(curl -s http://169.254.169.254/latest/meta-data/tags/instance/GUI_TO_START)"
@@ -16,12 +15,12 @@ sudo apt update
 # Essential packages
 sudo apt install git python3-venv python3-pip python3-dev build-essential net-tools linux-headers-cloud-amd64 -y
 # Useful tools
-sudo apt install -y tmux htop rsync ncdu
+sudo apt install -y tmux htop rsync ncdu linux-source linux-headers-`uname -r`
 # Remove if you don't want my tmux config
-sudo -u admin wget --no-verbose https://raw.githubusercontent.com/mikeage/dotfiles/master/.tmux.conf -P /home/admin/
-sudo -u admin wget --no-verbose https://raw.githubusercontent.com/mikeage/dotfiles/master/.tmux.conf.local -P /home/admin/
+# sudo -u admin wget --no-verbose https://raw.githubusercontent.com/mikeage/dotfiles/master/.tmux.conf -P /home/admin/
+# sudo -u admin wget --no-verbose https://raw.githubusercontent.com/mikeage/dotfiles/master/.tmux.conf.local -P /home/admin/
 # I like alacritty
-wget https://raw.githubusercontent.com/alacritty/alacritty/master/extra/alacritty.info && tic -xe alacritty,alacritty-direct alacritty.info && rm alacritty.info
+# wget https://raw.githubusercontent.com/alacritty/alacritty/master/extra/alacritty.info && tic -xe alacritty,alacritty-direct alacritty.info && rm alacritty.info
 
 cat <<EOF | sudo tee /usr/lib/systemd/system/instance-storage.service
 [Unit]
@@ -79,6 +78,41 @@ sudo -u admin wget --no-verbose https://huggingface.co/stabilityai/stable-diffus
 sudo -u admin wget --no-verbose https://huggingface.co/stabilityai/stable-diffusion-2-1/resolve/main/v2-1_768-ema-pruned.ckpt
 sudo -u admin wget --no-verbose https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference.yaml -O v2-1_512-ema-pruned.yaml
 sudo -u admin wget --no-verbose https://raw.githubusercontent.com/Stability-AI/stablediffusion/main/configs/stable-diffusion/v2-inference-v.yaml -O v2-1_768-ema-pruned.yaml
+# AbsoluteReality
+# match the filename we use in our Ruby wrapper
+sudo -u admin wget --no-verbose https://huggingface.co/Lykon/AbsoluteReality/resolve/main/AbsoluteReality_1.8.1_pruned.safetensors -O v1_absolutereality_v1.safetensors
+
+# Download VAE
+cd /home/admin/stable-diffusion-webui/models/VAE/
+# Again we match the filename we use in our Ruby wrapper
+sudo -u admin wget --no-verbose https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors -O vae-ft-mse-840000-ema-pruned.vae.safetensors
+
+#  Loras
+mkdir -p /home/admin/stable-diffusion-webui/models/Lora
+cd /home/admin/stable-diffusion-webui/models/Lora/
+sudo -u admin wget --no-verbose https://huggingface.co/OedoSoldier/detail-tweaker-lora/resolve/main/add_detail.safetensors -O add_detail.safetensors
+
+# Embeddings
+mkdir -p /home/admin/stable-diffusion-webui/embeddings
+cd /home/admin/stable-diffusion-webui/embeddings/
+sudo -u admin wget --no-verbose https://huggingface.co/datasets/gsdf/EasyNegative/resolve/main/EasyNegative.safetensors
+
+# Upscalers
+mkdir -p /home/admin/stable-diffusion-webui/models/ESRGAN
+cd /home/admin/stable-diffusion-webui/models/ESRGAN/
+sudo -u admin wget --no-verbose https://huggingface.co/FacehugmanIII/4x_foolhardy_Remacri/resolve/main/4x_foolhardy_Remacri.pth
+# This matches what we're already using
+cp 4x_foolhardy_Remacri.pth "Remacri 4x.pth"
+
+# Extensions
+cd /home/admin/stable-diffusion-webui/extensions/
+git clone https://github.com/ArtVentureX/sd-webui-agent-scheduler
+git clone https://github.com/Bing-su/adetailer.git
+
+# The scheduler extension needs this
+mkdir -p /mnt/ephemeral/tmp/gradio
+
+
 
 cat <<EOF | sudo tee /usr/lib/systemd/system/sdwebgui.service
 [Unit]
@@ -152,6 +186,8 @@ fi
 if [ "$GUI_TO_START" = "automatic1111" ]; then
 sudo systemctl enable sdwebgui
 sudo systemctl start sdwebgui
+# journalctl -u sdwebgui --follow --no-tail
+# tail -f /var/log/sdwebui.log
 fi
 if [ "$GUI_TO_START" = "invokeai" ]; then
 sudo systemctl enable invokeai

@@ -11,30 +11,51 @@ I use https://github.com/stateful/runme to make it easier to run these snippets;
 ```bash {name=launch-an-instance}
 export PUBLIC_KEY_PATH="$HOME/.ssh/id_rsa.pub"
 export INSTALL_AUTOMATIC1111="true"
-export INSTALL_INVOKEAI="true"
-export GUI_TO_START="invokeai"
+export INSTALL_INVOKEAI="false"
+export GUI_TO_START="automatic1111"
+export AWS_PROFILE="rallio"
 
 aws ec2 import-key-pair --key-name stable-diffusion-aws --public-key-material fileb://${PUBLIC_KEY_PATH} --tag-specifications 'ResourceType=key-pair,Tags=[{Key=creator,Value=stable-diffusion-aws}]'
+
+# {
+#     "KeyFingerprint": "78:43:12:86:29:5d:0e:6d:42:04:8c:da:cd:76:b8:db",
+#     "KeyName": "stable-diffusion-aws",
+#     "KeyPairId": "key-042bb44e88a84eb1c",
+#     "Tags": [
+#         {
+#             "Key": "creator",
+#             "Value": "stable-diffusion-aws"
+#         }
+#     ]
+# }
 
 # Get the latest Debian 11 image
 export AMI_ID=$(aws ec2 describe-images --owners 136693071363 --query "sort_by(Images, &CreationDate)[-1].ImageId" --filters "Name=name,Values=debian-11-amd64-*" | jq -r .)
 
 export DEFAULT_VPC_ID=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
-export SG_ID=$(aws ec2 create-security-group --group-name SSH-Only --description "Allow SSH from anywhere" --vpc-id $DEFAULT_VPC_ID --query 'GroupId' --output text)
+
+# Create once...
+export SG_ID=$(aws ec2 create-security-group --group-name Automatic1111-Access --description "Allow SSH at first, more later" --vpc-id $DEFAULT_VPC_ID --query 'GroupId' --output text)
+# Get the next time...
+export SG_ID=$(aws ec2 describe-security-groups --group-names Automatic1111-Access --query 'SecurityGroups[0].GroupId' --output=text)
+
+
 aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
 aws ec2 create-tags --resources $SG_ID --tags Key=creator,Value=stable-diffusion-aws
 
 aws ec2 run-instances \
     --no-cli-pager \
     --image-id $AMI_ID \
-    --instance-type g4dn.xlarge \
+    --instance-type g5.xlarge \
     --key-name stable-diffusion-aws \
     --security-group-ids $SG_ID \
     --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=50,VolumeType=gp3}' \
     --user-data file://setup.sh \
     --metadata-options "InstanceMetadataTags=enabled" \
     --tag-specifications "ResourceType=spot-instances-request,Tags=[{Key=creator,Value=stable-diffusion-aws}]" "ResourceType=instance,Tags=[{Key=INSTALL_AUTOMATIC1111,Value=$INSTALL_AUTOMATIC1111},{Key=INSTALL_INVOKEAI,Value=$INSTALL_INVOKEAI},{Key=GUI_TO_START,Value=$GUI_TO_START}]" \
-    --instance-market-options 'MarketType=spot,SpotOptions={MaxPrice=0.20,SpotInstanceType=persistent,InstanceInterruptionBehavior=stop}'
+    --instance-market-options 'MarketType=spot,SpotOptions={MaxPrice=1.006,SpotInstanceType=persistent,InstanceInterruptionBehavior=stop}'
+
+    # --instance-type g4dn.xlarge \
 
 ```
 
