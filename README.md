@@ -1,9 +1,5 @@
 # Stable Diffusion on AWS
 
-## Quick Start
-
-I use https://github.com/stateful/runme to make it easier to run these snippets; I strongly suggest you do too :-)
-
 ### Launching
 
 #### Create the spot instance request (which will create the instance after a few seconds)
@@ -29,8 +25,10 @@ aws ec2 import-key-pair --key-name stable-diffusion-aws --public-key-material fi
 #     ]
 # }
 
-# Get the latest Debian 11 image
-export AMI_ID=$(aws ec2 describe-images --owners 136693071363 --query "sort_by(Images, &CreationDate)[-1].ImageId" --filters "Name=name,Values=debian-11-amd64-*" | jq -r .)
+# This one gets the latest Pytorch one
+export AMI_ID=$(aws ec2 describe-images --filters "Name=name,Values=Deep Learning AMI GPU PyTorch 2.0*Ubuntu 20.04*" "Name=owner-id,Values=898082745236" --query 'reverse(sort_by(Images, &CreationDate))[0].ImageId' --output text)
+# If we don't want it to magically update on us:
+export AMI_ID="ami-0d60b9becafb5eac6"
 
 export DEFAULT_VPC_ID=$(aws ec2 describe-vpcs --filters Name=isDefault,Values=true --query 'Vpcs[0].VpcId' --output text)
 
@@ -39,10 +37,11 @@ export SG_ID=$(aws ec2 create-security-group --group-name Automatic1111-Access -
 # Get the next time...
 export SG_ID=$(aws ec2 describe-security-groups --group-names Automatic1111-Access --query 'SecurityGroups[0].GroupId' --output=text)
 
-
 aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 22 --cidr 0.0.0.0/0
+aws ec2 authorize-security-group-ingress --group-id $SG_ID --protocol tcp --port 7861 --cidr 0.0.0.0/0
 aws ec2 create-tags --resources $SG_ID --tags Key=creator,Value=stable-diffusion-aws
 
+# spot instance
 aws ec2 run-instances \
     --no-cli-pager \
     --image-id $AMI_ID \
@@ -50,24 +49,33 @@ aws ec2 run-instances \
     --key-name stable-diffusion-aws \
     --security-group-ids $SG_ID \
     --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=50,VolumeType=gp3}' \
-    --user-data file://setup.sh \
     --metadata-options "InstanceMetadataTags=enabled" \
     --tag-specifications "ResourceType=spot-instances-request,Tags=[{Key=creator,Value=stable-diffusion-aws}]" "ResourceType=instance,Tags=[{Key=INSTALL_AUTOMATIC1111,Value=$INSTALL_AUTOMATIC1111},{Key=INSTALL_INVOKEAI,Value=$INSTALL_INVOKEAI},{Key=GUI_TO_START,Value=$GUI_TO_START}]" \
-    --instance-market-options 'MarketType=spot,SpotOptions={MaxPrice=1.006,SpotInstanceType=persistent,InstanceInterruptionBehavior=stop}'
+    --instance-market-options 'MarketType=spot,SpotOptions={MaxPrice=1.006,SpotInstanceType=persistent,InstanceInterruptionBehavior=stop}' \
+    --user-data file://setup.sh
 
-    # --instance-type g4dn.xlarge \
+# on-demand
+aws ec2 run-instances \
+    --no-cli-pager \
+    --image-id $AMI_ID \
+    --instance-type g5.xlarge \
+    --key-name stable-diffusion-aws \
+    --security-group-ids $SG_ID \
+    --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=50,VolumeType=gp3}' \
+    --metadata-options "InstanceMetadataTags=enabled" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=RALLIO_AUTOMATIC_1111,Value=true}]" \
+    --user-data file://setup.sh
 
-```
-
-#### Configure the node to automatically register with duckdns (optional)
-
-```bash {name=register-with-duckdns, promptEnv=false}
-# First, export DUCKDNS_TOKEN and DUCKDNS_SUBDOMAIN
-
-export SPOT_INSTANCE_REQUEST="$(aws ec2 describe-spot-instance-requests --filters 'Name=tag:creator,Values=stable-diffusion-aws' 'Name=state,Values=active,open' | jq -r '.SpotInstanceRequests[].SpotInstanceRequestId')"
-export INSTANCE_ID="$(aws ec2 describe-spot-instance-requests --spot-instance-request-ids $SPOT_INSTANCE_REQUEST | jq -r '.SpotInstanceRequests[].InstanceId')"
+# Get the latest on-demand instance ID and IP
+export INSTANCE_ID="$(aws ec2 describe-instances --filters 'Name=tag:RALLIO_AUTOMATIC_1111,Values=true' 'Name=instance-state-name,Values=running' --query 'reverse(sort_by(Reservations[*].Instances[], &LaunchTime))[0].InstanceId' --output text)"
 export PUBLIC_IP="$(aws ec2 describe-instances --instance-id $INSTANCE_ID | jq -r '.Reservations[].Instances[].PublicIpAddress')"
-ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no admin@$PUBLIC_IP "echo '#"\!"/bin/sh' | sudo tee /etc/rc.local && echo 'curl '\''https://www.duckdns.org/update?domains=${DUCKDNS_SUBDOMAIN}&token=${DUCKDNS_TOKEN}&verbose=true'\' | sudo tee -a /etc/rc.local && sudo chmod +x /etc/rc.local && sudo systemctl daemon-reload && sudo systemctl start rc-local && systemctl status rc-local"
+
+# Connect to it
+ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -L7860:localhost:7860 -L9090:localhost:9090 ubuntu@$PUBLIC_IP
+
+# Terminate it
+aws ec2 terminate-instances --instance-ids "$INSTANCE_ID"
+
 ```
 
 #### Create an Alarm to stop the instance after 15 minutes of idling (optional)
@@ -96,24 +104,13 @@ aws cloudwatch put-metric-alarm \
 export SPOT_INSTANCE_REQUEST="$(aws ec2 describe-spot-instance-requests --filters 'Name=tag:creator,Values=stable-diffusion-aws' 'Name=state,Values=active,open' | jq -r '.SpotInstanceRequests[].SpotInstanceRequestId')"
 export INSTANCE_ID="$(aws ec2 describe-spot-instance-requests --spot-instance-request-ids $SPOT_INSTANCE_REQUEST | jq -r '.SpotInstanceRequests[].InstanceId')"
 export PUBLIC_IP="$(aws ec2 describe-instances --instance-id $INSTANCE_ID | jq -r '.Reservations[].Instances[].PublicIpAddress')"
-ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -L7860:localhost:7860 -L9090:localhost:9090 admin@$PUBLIC_IP
+
+# The ubuntu one creates the ubuntu user
+ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -L7860:localhost:7860 -L9090:localhost:9090 ubuntu@$PUBLIC_IP
 
 # Wait about 10 minutes from the first creation
 
 # Open http://localhost:7860 or http://localhost:9090
-```
-
-Alternatively, if you used the DuckDNS configuration above, adding this to your `~/.ssh/config` might be easier:
-
-```
-Host YOUR_NICKNAME
-    User admin
-    Hostname YOUR_NICKNAME.duckdns.org
-    IdentityFile ~/.ssh/StableDiffusionKey.pem
-    UserKnownHostsFile /dev/null
-    StrictHostKeyChecking no
-    LocalForward 7860 localhost:7860
-    LocalForward 9090 localhost:9090
 ```
 
 ### Lifecycle Management
