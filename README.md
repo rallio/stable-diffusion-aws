@@ -62,12 +62,13 @@ aws ec2 run-instances \
     --key-name stable-diffusion-aws \
     --security-group-ids $SG_ID \
     --block-device-mappings 'DeviceName=/dev/xvda,Ebs={VolumeSize=50,VolumeType=gp3}' \
+    --hibernation-options Configured=true \
     --metadata-options "InstanceMetadataTags=enabled" \
-    --tag-specifications "ResourceType=instance,Tags=[{Key=RALLIO_AUTOMATIC_1111,Value=true}]" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=RALLIO_AUTOMATIC_1111,Value=true},{Key=RALLIO_ENV,Value=test}]" \
     --user-data file://setup.sh
 
 # Get the latest on-demand instance ID and IP
-export INSTANCE_ID="$(aws ec2 describe-instances --filters 'Name=tag:RALLIO_AUTOMATIC_1111,Values=true' 'Name=instance-state-name,Values=running' --query 'reverse(sort_by(Reservations[*].Instances[], &LaunchTime))[0].InstanceId' --output text)"
+export INSTANCE_ID="$(aws ec2 describe-instances --filters 'Name=tag:RALLIO_AUTOMATIC_1111,Values=true' 'Name=instance-state-name,Values=running' 'Name=tag:RALLIO_ENV,Values=test' --query 'reverse(sort_by(Reservations[*].Instances[], &LaunchTime))[0].InstanceId' --output text)"
 export PUBLIC_IP="$(aws ec2 describe-instances --instance-id $INSTANCE_ID | jq -r '.Reservations[].Instances[].PublicIpAddress')"
 
 # Connect to it
@@ -171,3 +172,22 @@ There is approximately 10GB free on the root partition. This should be sufficien
 To save costs, the instance will automatically be shutdown if the CPU Utilization (sampled every 5 minutes) is less than 20% for 3 consecutive checks. This can be skipped if desired.
 
 There is no protection on the GUI, so it is not exposed to the world. Instead, create an ssh tunnel and connect via either http://localhost:7860 for automatic1111 or http://localhost:9090 for Invoke-AI.
+
+## Create tarball
+
+```
+# if you know it
+PUBLIC_IP=3.89.71.3
+ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no "ubuntu@${PUBLIC_IP}" '
+  tar zcvf - -C /home/ubuntu --exclude stable-diffusion-webui/outputs/\* stable-diffusion-webui
+' | pv -trab > /mnt/d/stable-diffusion-webui.tar.gz
+aws s3 cp --profile=rallio --acl=public-read /mnt/d/stable-diffusion-webui.tar.gz s3://rallio-private/stable-diffusion/stable-diffusion-webui--2023-08-16.tar.gz
+
+# Restore on server
+
+curl https://rallio-private.s3.amazonaws.com/stable-diffusion/stable-diffusion-webui--2023-08-16.tar.gz | tar zxvf - -C /home/ubuntu
+
+# Create 50GB gp2 type EBS volume with 150 iops with multi-attach enabled
+aws ec2 create-volume --availability-zone us-east-1a --size 50 --volume-type gp2 --iops 150 --tag-specifications 'ResourceType=volume,Tags=[{Key=Name,Value=rallio-automatic1111-models}]' --multi-attach-enabled
+
+```

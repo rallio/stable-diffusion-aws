@@ -1,6 +1,24 @@
 #!/bin/bash
 
+FRESH_INSTALL=false
+
 set -e
+
+# Use wget to download $2 to the directory $1 using the filename $3 if provided
+download() {
+  sudo -u ubuntu mkdir -p "/home/ubuntu/stable-diffusion-webui/$1"
+  cd "/home/ubuntu/stable-diffusion-webui/$1"
+  if [ -z "$3" ]; then
+    sudo -u ubuntu wget --no-verbose "$2"
+  else
+    sudo -u ubuntu wget --no-verbose "$2" -O "$3"
+
+    # If $4 and beyond are specified, create symlinks to them from $3
+    for i in "${@:4}"; do
+      sudo -u ubuntu ln -s "$3" "$i"
+    done
+  fi
+}
 
 # Install packages
 sudo apt update
@@ -48,48 +66,62 @@ sudo mkdir "$XDG_CACHE_HOME"
 sudo chmod 777 "$TMPDIR" "$XDG_CACHE_HOME"
 
 cd /home/ubuntu
-sudo -u ubuntu git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
 
-# Download initial models
-sudo -u ubuntu mkdir -p /home/ubuntu/stable-diffusion-webui/models/Stable-diffusion/
-cd /home/ubuntu/stable-diffusion-webui/models/Stable-diffusion/
 
-# AbsoluteReality
-sudo -u ubuntu wget --no-verbose https://huggingface.co/Lykon/AbsoluteReality/resolve/main/AbsoluteReality_1.8.1_pruned.safetensors -O v1_absolutereality_v1.safetensors
 
-# VAE
-cd /home/ubuntu/stable-diffusion-webui/models/VAE/
-sudo -u ubuntu wget --no-verbose https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors -O vae-ft-mse-840000-ema-pruned.vae.safetensors
+if [ "$FRESH_INSTALL" = "true" ]; then
 
-#  Loras
-sudo -u ubuntu mkdir -p /home/ubuntu/stable-diffusion-webui/models/Lora
-cd /home/ubuntu/stable-diffusion-webui/models/Lora/
-sudo -u ubuntu wget --no-verbose https://huggingface.co/OedoSoldier/detail-tweaker-lora/resolve/main/add_detail.safetensors -O add_detail.safetensors
+  #################
+  # FRESH INSTALL #
+  #################
 
-# Embeddings
-sudo -u ubuntu mkdir -p /home/ubuntu/stable-diffusion-webui/embeddings
-cd /home/ubuntu/stable-diffusion-webui/embeddings/
-sudo -u ubuntu wget --no-verbose https://huggingface.co/datasets/gsdf/EasyNegative/resolve/main/EasyNegative.safetensors
+  sudo -u ubuntu git clone https://github.com/AUTOMATIC1111/stable-diffusion-webui.git
 
-# Upscalers
-sudo -u ubuntu mkdir -p /home/ubuntu/stable-diffusion-webui/models/ESRGAN
-cd /home/ubuntu/stable-diffusion-webui/models/ESRGAN/
-sudo -u ubuntu wget --no-verbose https://huggingface.co/FacehugmanIII/4x_foolhardy_Remacri/resolve/main/4x_foolhardy_Remacri.pth
-sudo -u ubuntu cp 4x_foolhardy_Remacri.pth "Remacri 4x.pth"
+  # AbsoluteReality model
+  download models/Stable-diffusion https://huggingface.co/Lykon/AbsoluteReality/resolve/main/AbsoluteReality_1.8.1_pruned.safetensors AbsoluteReality_1.8.1_pruned.safetensors v1_absolutereality_v1.safetensors
 
-# Extensions
-cd /home/ubuntu/stable-diffusion-webui/extensions/
-sudo -u ubuntu git clone https://github.com/ArtVentureX/sd-webui-agent-scheduler
-sudo -u ubuntu git clone https://github.com/Bing-su/adetailer.git
+  # DreamShaper model
+  download models/Stable-diffusion https://huggingface.co/Lykon/DreamShaper/resolve/main/DreamShaper_8_pruned.safetensors
 
-# The scheduler extension needs this
-sudo -u ubuntu mkdir -p /mnt/ephemeral/tmp/gradio
+  # VAE
+  download models/VAE https://huggingface.co/stabilityai/sd-vae-ft-mse-original/resolve/main/vae-ft-mse-840000-ema-pruned.safetensors vae-ft-mse-840000-ema-pruned.vae.safetensors
 
-# Install custom webui-user.sh
-cat <<EOF | sudo -u ubuntu tee /home/ubuntu/stable-diffusion-webui/webui-user.sh
-#!/bin/bash
-export COMMANDLINE_ARGS="--xformers --medvram --no-half-vae --api"
-EOF
+  # Loras
+  download models/Lora https://huggingface.co/OedoSoldier/detail-tweaker-lora/resolve/main/add_detail.safetensors
+
+  # Embeddings
+  download embeddings https://huggingface.co/datasets/gsdf/EasyNegative/resolve/main/EasyNegative.safetensors
+  download embeddings https://huggingface.co/Lykon/DreamShaper/resolve/main/UnrealisticDream.pt
+  download embeddings https://huggingface.co/Lykon/DreamShaper/resolve/main/FastNegativeEmbedding.pt
+  download embeddings https://huggingface.co/Lykon/DreamShaper/resolve/main/BadDream.pt
+
+  # Upscalers
+  download models/ESRGAN https://huggingface.co/FacehugmanIII/4x_foolhardy_Remacri/resolve/main/4x_foolhardy_Remacri.pth "4x_foolhardy_Remacri.pth" "Remacri 4x.pth"
+
+  # Extensions
+  cd /home/ubuntu/stable-diffusion-webui/extensions
+  sudo -u ubuntu git clone https://github.com/ArtVentureX/sd-webui-agent-scheduler
+  sudo -u ubuntu git clone https://github.com/Bing-su/adetailer.git
+
+  # The scheduler extension needs this
+  sudo -u ubuntu mkdir -p /mnt/ephemeral/tmp/gradio
+
+  # Install custom webui-user.sh
+  cat <<EOF | sudo -u ubuntu tee /home/ubuntu/stable-diffusion-webui/webui-user.sh
+  #!/bin/bash
+  export COMMANDLINE_ARGS="--xformers --no-half-vae --api"
+  EOF
+
+else
+
+  ####################
+  # DOWNLOAD TARBALL #
+  ####################
+
+  curl https://rallio-private.s3.amazonaws.com/stable-diffusion/stable-diffusion-webui--2023-08-16.tar.gz |
+  tar zxvf - -C /home/ubuntu
+
+fi
 
 # Install service
 cat <<EOF | sudo tee /usr/lib/systemd/system/sdwebgui.service
@@ -117,6 +149,7 @@ EOF
 # Enable and start service
 sudo systemctl enable sdwebgui
 sudo systemctl start sdwebgui
+sudo systemctl stop sdwebgui
 
 # Add password file for API authentication.
 #
